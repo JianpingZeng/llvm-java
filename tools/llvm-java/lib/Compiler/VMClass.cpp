@@ -36,22 +36,22 @@ int VMClass::INVALID_INTERFACE_INDEX = 1;
 // computed.
 void VMClass::init()
 {
-  classRecord_ = new GlobalVariable(
+  classRecord_ = nullptr; /*new GlobalVariable(
     *resolver_->getModule(),
     StructType::get(ctx),
     false,
     GlobalVariable::ExternalLinkage,
     NULL,
-    getName() + "<class_record>");
+    getName() + "<class_record>");*/
 }
 
-VMClass::VMClass(Resolver* resolver, std::string className, LLVMContext &ctx_)
+VMClass::VMClass(Resolver* resolver, std::string &className, LLVMContext &ctx_)
   : name_(className),
     descriptor_(Resolver::canonicalizeClassName(className)),
     resolver_(resolver),
     classFile_(ClassFile::get(className)),
     componentClass_(NULL),
-    layoutType_(StructType::get(ctx)),
+    layoutType_(StructType::create(ctx_)),
     type_(PointerType::get(layoutType_, 0)),
     interfaceIndex_(INVALID_INTERFACE_INDEX),
     resolvedConstantPool_(classFile_->getNumConstants()),
@@ -66,7 +66,7 @@ VMClass::VMClass(Resolver* resolver, VMClass* componentClass, LLVMContext &ctx_)
     resolver_(resolver),
     classFile_(NULL),
     componentClass_(componentClass),
-    layoutType_(StructType::get(ctx)),
+    layoutType_(StructType::create(ctx_)),
     type_(PointerType::get(layoutType_, 0)),
     interfaceIndex_(INVALID_INTERFACE_INDEX),
     ctx(ctx_)
@@ -185,7 +185,10 @@ void VMClass::computeLayout()
     }
   }
 
-  layoutType_ = StructType::get(ctx, layout);
+  assert(isa<StructType>(layoutType_) && "don't need to computeLayout for primitve type!");
+  dyn_cast<StructType>(layoutType_)->setBody(layout);
+  dyn_cast<StructType>(layoutType_)->setName(getName() + ".struct");
+  type_ = PointerType::get(layoutType_, 0);
   DEBUG(std::cerr << "Computed layout for: " << getName() << '\n');
 }
 
@@ -234,7 +237,7 @@ VMClass::buildInterfaceClassRecord(VMClass* interface)
     }
   }
 
-  llvm::Constant* classRecordInit = ConstantStruct::get(StructType::get(ctx), init);
+  llvm::Constant* classRecordInit = ConstantStruct::get(ConstantStruct::getTypeForElements(init), init);
 
   return ConstantExpr::getPointerBitCastOrAddrSpaceCast(
     new GlobalVariable(
@@ -243,7 +246,7 @@ VMClass::buildInterfaceClassRecord(VMClass* interface)
       true,
       GlobalVariable::ExternalLinkage,
       classRecordInit,
-      getName() + '+' + interface->getName() + "<class_record>"),
+      getName() + '+' + interface->getName() + "_class_record"),
     resolver_->getClassRecordPtrType());
 }
 
@@ -407,7 +410,7 @@ llvm::Constant* VMClass::buildMethodDescriptors()
       *resolver_->getModule(),
       arrayType,
       true,
-      GlobalVariable::ExternalLinkage,
+      GlobalVariable::InternalLinkage,
       ConstantArray::get(arrayType, init),
       getName() + "<method_descriptors>");
 }
@@ -492,9 +495,13 @@ llvm::Constant* VMClass::buildClassTypeInfo()
   init.push_back(buildSuperClassRecords());
   init.push_back(ConstantInt::get(Type::Type::getInt32Ty(getGlobalContext()), getInterfaceIndex(), true));
   init.push_back(buildInterfaceClassRecords());
-  if (isArray())
-    init.push_back(ConstantExpr::getPointerBitCastOrAddrSpaceCast(getComponentClass()->getClassRecord(),
-                                         resolver_->getClassRecordPtrType()));
+  if (isArray()) {
+    if (!getComponentClass()->getClassRecord())
+      init.push_back(ConstantPointerNull::getNullValue(resolver_->getClassRecordPtrType()));
+    else
+      init.push_back(ConstantExpr::getPointerBitCastOrAddrSpaceCast(getComponentClass()->getClassRecord(),
+          resolver_->getClassRecordPtrType()));
+  }
   else
     init.push_back(
       llvm::Constant::getNullValue(resolver_->getClassRecordPtrType()));
@@ -518,7 +525,7 @@ llvm::Constant* VMClass::buildClassTypeInfo()
   init.push_back(buildStaticMethodDescriptors());
   init.push_back(buildStaticMethodPointers());
 
-  return ConstantStruct::get(StructType::get(ctx), init);
+  return ConstantStruct::get(ConstantStruct::getTypeForElements(init), init);
 }
 
 void VMClass::computeClassRecord()
@@ -586,12 +593,24 @@ void VMClass::computeClassRecord()
       method->getFunction());
   }
 
-  llvm::Constant* classRecordInit = ConstantStruct::get(StructType::get(ctx), init);
-  dyn_cast<StructType>(classRecordInit->getType())->setName("classRecord." + getName());
-  // Set the initializer of the class record.
-  classRecord_->setInitializer(classRecordInit);
-  // Mark the class record as constant.
-  classRecord_->setConstant(true);
+  unsigned VecSize = init.size();
+  SmallVector<Type*, 16> EltTypes(VecSize);
+  for (unsigned i = 0; i != VecSize; ++i)
+    EltTypes[i] = init[i]->getType();
+
+  StructType *classRecordType = StructType::create(ctx, EltTypes);
+  classRecordType->setName("classRecord." + getName());
+  llvm::Constant* classRecordInit = ConstantStruct::get(classRecordType, init);
+
+  classRecord_ = new GlobalVariable(
+    *resolver_->getModule(),
+    classRecordType,
+    // Mark the class record as constant.
+    true,
+    GlobalVariable::ExternalLinkage,
+    // Set the initializer of the class record.
+    classRecordInit,
+    getName() + "_class_record");
 
   DEBUG(std::cerr << "Computed class record for: " << getName() << '\n');
 }
@@ -599,8 +618,9 @@ void VMClass::computeClassRecord()
 void VMClass::link()
 {
   // Primitive classes require no linking.
-  if (isPrimitive())
-    ;
+  if (isPrimitive()) {
+    return;
+  }
   else if (isArray()) {
     superClasses_.reserve(1);
     superClasses_.push_back(resolver_->getClass("java/lang/Object"));
@@ -654,8 +674,7 @@ void VMClass::link()
 
   computeLayout();
   computeClassRecord();
-
-  //assert(!isa<OpaqueType>(getLayoutType()) &&"Class not initialized properly!");
+  assert(!dyn_cast<StructType>(getLayoutType())->isOpaque() && "Class not initialized properly!");
 }
 
 llvm::Constant* VMClass::getConstant(unsigned index) 

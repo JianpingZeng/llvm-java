@@ -37,7 +37,7 @@ namespace llvm { namespace Java {
     Resolver* resolver_;
     ClassFile* classFile_;
     VMClass* componentClass_;
-    StructType* layoutType_;
+    Type* layoutType_;
     Type* type_;
     int interfaceIndex_;
     typedef std::map<std::string, VMField> FieldMap;
@@ -84,7 +84,7 @@ namespace llvm { namespace Java {
     VMClass(Resolver* resolver, Type* type, LLVMContext &);
 
     // Load class by name.
-    VMClass(Resolver* resolver, std::string className, LLVMContext &);
+    VMClass(Resolver* resolver, std::string &className, LLVMContext &);
 
     // Load array class of component the passed class.
     VMClass(Resolver* resolver, VMClass* componentClass, LLVMContext &);
@@ -100,7 +100,7 @@ namespace llvm { namespace Java {
     std::string getName() { return name_; }
     std::string getDescriptor() { return descriptor_; }
     Resolver* getResolver() { return resolver_; }
-    StructType* getLayoutType() { return layoutType_; }
+    Type* getLayoutType() { return layoutType_; }
     Type* getType() { return type_; }
     ClassFile* getClassFile() { return classFile_; }
     unsigned getNumSuperClasses() { return superClasses_.size(); }

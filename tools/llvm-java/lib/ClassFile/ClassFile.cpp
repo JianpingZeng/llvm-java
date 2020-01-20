@@ -126,46 +126,57 @@ namespace {
   return new ClassFile(is);
 }
 
-std::vector<StringRef> ClassFile::getClassPath()
+std::vector<std::string> ClassFile::getClassPath()
 {
   DEBUG(std::cerr << "CLASSPATH=" << ClassPath << '\n');
 
-  std::vector<StringRef> result;
-  StringRef path;
-  int b = 0, e = 0;
-  do {
+  std::vector<std::string> result;
+
+  std::string path;
+  long b = 0, e = 0;
+  while (true) {
     e = ClassPath.find(':', b);
+    if (e == -1) break;
+
     // FIXME: Currently we only support flat class file reading. When
     // jar files are supported this chech has to change to not require
     // that each CLASSPATH component is a directory.
     path = ClassPath.substr(b, e - b);
     if (!path.empty() && sys::fs::exists(path) && sys::fs::is_directory(path)) {
       result.push_back(path);
-      DEBUG(std::cerr << "Adding: " << path.str() << " to CLASSPATH\n");
+      DEBUG(std::cerr << "Adding: " << path << " to CLASSPATH\n");
     }
     b = e + 1;
-  } while (e != std::string::npos);
+  }
+  if (b < ClassPath.size())
+    result.push_back(ClassPath.substr(b, ClassPath.size() - b));
 
   return result;
 }
 
-StringRef ClassFile::getFileForClass( std::string& classname)
+std::string ClassFile::getFileForClass( std::string& classname)
 {
-  static  std::vector<StringRef> classpath = getClassPath();
+  static  std::vector<std::string> classpath = getClassPath();
   DEBUG(std::cerr << "Looking up class: " << classname << '\n');
 
   std::string clazz = classname;
-  // replace '.' with '/'
-  for (unsigned i = 0, e = clazz.size(); i != e; ++i)
+  // replace '.' with '/', exclude the trailing ".class"
+  unsigned e = clazz.size();
+  bool hasClassExt = (classname.size() > 6 && std::string(classname.end() - 6, classname.end()) == ".class");
+  if (hasClassExt) e -= 6;
+
+  for (unsigned i = 0; i != e; ++i)
     if (clazz[i] == '.')
       clazz[i] = '/';
-  clazz += ".class";
+
+  if (!hasClassExt)
+    clazz += ".class";
 
   for (unsigned i = 0, e = classpath.size(); i != e; ++i) {
-    StringRef path = classpath[i];
+    std::string path = classpath[i];
     assert(sys::fs::is_directory(path) && "CLASSPATH element not a directory!");
-    StringRef filename = (path + "/" + clazz).str();
-    DEBUG(std::cerr << "Trying file: " << filename.str() << '\n');
+    std::string filename = path + "/" + clazz;
+    DEBUG(std::cerr << "Trying file: " << filename << '\n');
     if (sys::fs::exists(filename))
       return filename;
   }
@@ -175,13 +186,14 @@ StringRef ClassFile::getFileForClass( std::string& classname)
 
  ClassFile* ClassFile::get( std::string& classname)
 {
-  typedef std::map<std::string,  ClassFile*> Name2ClassMap;
+  typedef std::map<std::string, ClassFile*> Name2ClassMap;
   static Name2ClassMap n2cMap_;
 
   Name2ClassMap::iterator it = n2cMap_.lower_bound(classname);
 
   if (it == n2cMap_.end() || it->first != classname) {
-    std::ifstream in(getFileForClass(classname));
+    std::string filename = getFileForClass(classname);
+    std::ifstream in(filename);
     it = n2cMap_.insert(it, std::make_pair(classname, readClassFile(in)));
   }
 

@@ -26,13 +26,8 @@ using namespace llvm::Java;
 
 Resolver::Resolver(Module* module)
   : module_(module),
-    nextInterfaceIndex_(0),
-    objectBaseLayoutType_(StructType::get(module_->getContext(), false)),
-    objectBaseType_(PointerType::get(objectBaseLayoutType_, 0)),
-    classRecordType_(StructType::get(module_->getContext(), false)),
-    classRecordPtrType_(PointerType::get(classRecordType_, 0))
+    nextInterfaceIndex_(0)
 {
-  objectBaseLayoutType_->setName("struct.llvm_java_object_base");
   LLVMContext &ctx = module->getContext();
 
   // Compute the class record type. A class record looks like:
@@ -41,6 +36,10 @@ Resolver::Resolver(Module* module)
   //   struct type_info;
   // };
   //
+  classRecordType_ = StructType::create(module_->getContext(), "struct.llvm_java_class_record");
+
+
+
   // struct type_info {
   //   char* name;
   //   int depth;
@@ -58,7 +57,8 @@ Resolver::Resolver(Module* module)
   //   char** staticMethodDescriptors;
   //   void** staticMethods;
   // };
-
+  typeInfoType_ = StructType::create(ctx, "struct.llvm_java_typeinfo");
+  // initialize all member types of type info.
   // Compute the type_info type.
   SmallVector<Type*, 8> elements;
   elements.push_back(PointerType::get(Type::getInt8Ty(ctx), 0));
@@ -76,13 +76,15 @@ Resolver::Resolver(Module* module)
   elements.push_back(PointerType::get(PointerType::get(Type::getInt8Ty(ctx), 0), 0));
   elements.push_back(PointerType::get(PointerType::get(Type::getInt8Ty(ctx), 0), 0));
   elements.push_back(PointerType::get(PointerType::get(Type::getInt8Ty(ctx), 0), 0));
-  typeInfoType_ = StructType::get(ctx, elements);
-  typeInfoType_->setName("struct.llvm_java_typeinfo");
+  typeInfoType_->setBody(elements);
 
-  // Compute the class_record type.
-  classRecordType_->setBody(getTypeInfoType());
-  classRecordType_->setName("struct.llvm_java_class_record");
-  classRecordPtrType_ = PointerType::get(classRecordType_, 0);
+  // Initialize the member type for class_record.
+  classRecordType_->setBody(typeInfoType_);
+
+  objectBaseLayoutType_ = (StructType::create(module_->getContext(), "struct.llvm_java_object_base"));
+  objectBaseLayoutType_->setBody(PointerType::get(Type::getInt8PtrTy(ctx), 0));
+  objectBaseType_ = (PointerType::get(objectBaseLayoutType_, 0));
+  classRecordPtrType_ = (PointerType::get(classRecordType_, 0));
 }
 
 Type* Resolver::getType(std::string& descriptor,
@@ -182,8 +184,9 @@ VMClass* Resolver::getClassForDesc(std::string descriptor)
       abort();
     }
     it->second.link();
-    if (!it->second.isPrimitive() && !it->second.isInterface())
-      it->second.getLayoutType()->setName("struct." + descriptor);
+    if (!it->second.isPrimitive() && !it->second.isInterface()) {
+      dyn_cast<StructType>(it->second.getLayoutType())->setName("struct." + descriptor);
+    }
     DEBUG(std::cerr << "Loaded class: " << it->second.getName());
     DEBUG(std::cerr << " (" << it->second.getInterfaceIndex() << ")\n");
   }
@@ -229,9 +232,12 @@ void Resolver::emitClassRecordsArray()
   init.reserve(classMap_.size() + 1);
 
   for (ClassMap::iterator i = classMap_.begin(), e = classMap_.end();
-       i != e; ++i)
-    init.push_back(ConstantExpr::getPointerBitCastOrAddrSpaceCast(i->second.getClassRecord(),
-                                         classRecordPtrType_));
+       i != e; ++i) {
+       if (i->second.getClassRecord()) {
+         init.push_back(ConstantExpr::getPointerBitCastOrAddrSpaceCast(i->second.getClassRecord(),
+                                                                       classRecordPtrType_));
+       }
+    }
 
   // Null terminate the array.
   init.push_back(llvm::Constant::getNullValue(classRecordPtrType_));

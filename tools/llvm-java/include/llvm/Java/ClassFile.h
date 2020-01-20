@@ -20,7 +20,6 @@
 #include <vector>
 
 #include <llvm/Support/DataTypes.h>
-#include <llvm/ADT/StringRef.h>
 
 namespace llvm { namespace Java {
 
@@ -67,8 +66,8 @@ namespace llvm { namespace Java {
 
   class ClassFile {
     static  ClassFile* readClassFile(std::istream& is);
-    static std::vector<llvm::StringRef> getClassPath();
-    static StringRef getFileForClass( std::string& classname);
+    static std::vector<std::string> getClassPath();
+    static std::string getFileForClass( std::string& classname);
 
   public:
     static  ClassFile* get( std::string& classname);

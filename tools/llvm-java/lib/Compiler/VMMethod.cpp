@@ -100,13 +100,19 @@ VMMethod::VMMethod( VMClass* parent,  Method* method, int index)
 llvm::Constant* VMMethod::buildMethodDescriptor() 
 {
   llvm::Constant* fd = ConstantDataArray::getString(getGlobalContext(), getName() + getDescriptor());
-  return new GlobalVariable(
+
+  // create a constant array with the string initializer.
+  // then use the GetElementPtr to retreve the element of first element.
+  GlobalVariable*gv = new GlobalVariable(
       *parent_->getResolver()->getModule(),
       fd->getType(),
       true,
-      GlobalVariable::ExternalLinkage,
+      GlobalVariable::InternalLinkage,
       fd,
       getName() + getDescriptor());
+  LLVMContext &ctx = getGlobalContext();
+  Value* args[] = {ConstantInt::get(Type::getInt32Ty(ctx), 0), ConstantInt::get(Type::getInt32Ty(ctx), 0)};
+  return ConstantExpr::getGetElementPtr(gv, makeArrayRef(args), true);
 }
 
 llvm::Constant* VMMethod::getBridgeFunction() 

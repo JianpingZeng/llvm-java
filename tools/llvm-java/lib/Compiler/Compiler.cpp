@@ -75,8 +75,8 @@ namespace llvm { namespace Java { namespace {
         resolver_(new Resolver(module_)),
         locals_(resolver_, 0),
         opStack_(resolver_, 0) {
-      StructType* JNIEnvTy = StructType::get(module_->getContext(), false);
-      JNIEnvTy->setName("JNIEnv");
+      StructType* JNIEnvTy = StructType::create(module_->getContext(), "JNIEnv");
+
       JNIEnvPtr_ = new GlobalVariable(*module_, JNIEnvTy,
                                       true,
                                       GlobalVariable::ExternalLinkage,
@@ -157,7 +157,10 @@ namespace llvm { namespace Java { namespace {
       params.reserve(4);
       params.clear();
       params.push_back(arrayData);
-      params.push_back(chars);
+      Value* zero = ConstantInt::getNullValue(Type::getInt32Ty(ctx));
+      Value* double_zero[] = {zero, zero};
+      Value* gep = ConstantExpr::getGetElementPtr(chars, makeArrayRef(double_zero), true);
+      params.push_back(gep);
       params.push_back(CastInst::CreateZExtOrBitCast(count, Type::getInt64Ty(ctx), TMP, ip));
       params.push_back(ConstantInt::get(Type::getInt32Ty(ctx), 0));
       CallInst::Create(memcpy_, params, "", ip);
@@ -308,35 +311,7 @@ namespace llvm { namespace Java { namespace {
 
       // HACK: skip most of the class libraries.
        std::string funcName = function->getName();
-      if ((funcName.find("java/") == 0 &&
-           funcName.find("java/lang/Object") != 0 &&
-           (funcName.find("java/lang/Throwable") != 0 ||
-            funcName.find("java/lang/Throwable$StaticData/<cl") == 0) &&
-           funcName.find("java/lang/Exception") != 0 &&
-           funcName.find("java/lang/IllegalArgumentException") != 0 &&
-           funcName.find("java/lang/IllegalStateException") != 0 &&
-           funcName.find("java/lang/IndexOutOfBoundsException") != 0 &&
-           funcName.find("java/lang/RuntimeException") != 0 &&
-           (funcName.find("java/lang/Math") != 0 ||
-            funcName.find("java/lang/Math/<cl") == 0) &&
-           funcName.find("java/lang/Number") != 0 &&
-           funcName.find("java/lang/Byte") != 0 &&
-           funcName.find("java/lang/Float") != 0 &&
-           funcName.find("java/lang/Integer") != 0 &&
-           funcName.find("java/lang/Long") != 0 &&
-           funcName.find("java/lang/Short") != 0 &&
-           (funcName.find("java/lang/String") != 0 ||
-            funcName.find("java/lang/String/<cl") == 0) &&
-           funcName.find("java/lang/StringBuffer") != 0 &&
-           (funcName.find("java/lang/System") != 0 ||
-            funcName.find("java/lang/System/loadLibrary") == 0) &&
-           funcName.find("java/lang/VMSystem") != 0 &&
-           (funcName.find("java/util/") != 0 ||
-            funcName.find("java/util/Locale/<cl") == 0 ||
-            funcName.find("java/util/ResourceBundle/<cl") == 0 ||
-            funcName.find("java/util/Calendar/<cl") == 0) ||
-            funcName.find("java/util/PropertyPermission/<cl") == 0) ||
-          (funcName.find("gnu/") == 0)) {
+       if (!strncmp(funcName.c_str(), "java/", 5)) {
         DEBUG(std::cerr << "Skipping compilation of method: "
               << funcName << '\n');
         return;
@@ -1142,18 +1117,15 @@ namespace llvm { namespace Java { namespace {
 
       // The size of the element.
       llvm::Constant* elementSize = nullptr;
-      if (elementTy->getIntegerBitWidth() <= 32)
-        elementSize = ConstantExpr::getZExt(ConstantExpr::getSizeOf(elementTy), Type::getInt32Ty(getGlobalContext()));
-      else
-        elementSize = ConstantExpr::getTrunc(ConstantExpr::getSizeOf(elementTy), Type::getInt32Ty(getGlobalContext()));
+      elementSize = ConstantExpr::getIntegerCast(ConstantExpr::getSizeOf(elementTy), Type::getInt32Ty(getGlobalContext()), false);
 
       // The size of the array part of the struct.
       Value* size = BinaryOperator::Create(
         Instruction::Mul, count, elementSize, TMP, ip);
       // The size of the rest of the array object.
       llvm::Constant* arrayObjectSize =
-        ConstantExpr::getBitCast(ConstantExpr::getSizeOf(clazz->getLayoutType()),
-                              Type::getInt32Ty(getGlobalContext()));
+        ConstantExpr::getIntegerCast(ConstantExpr::getSizeOf(clazz->getLayoutType()),
+                              Type::getInt32Ty(getGlobalContext()), false);
 
       // Add the array part plus the object part together.
       size = BinaryOperator::Create(

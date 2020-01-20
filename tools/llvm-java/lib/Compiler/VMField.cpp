@@ -64,13 +64,16 @@ llvm::Constant* VMField::buildFieldDescriptor()
   LLVMContext &ctx = getGlobalContext();
   llvm::Constant* fd = ConstantDataArray::getString(ctx, getName() + getDescriptor());
 
-  return new GlobalVariable(
+  GlobalVariable* gv = new GlobalVariable(
       *parent_->getResolver()->getModule(),
       fd->getType(),
       true,
-      GlobalVariable::ExternalLinkage,
+      GlobalVariable::InternalLinkage,
       fd,
       getName() + getDescriptor());
+
+  Value* args[] = {ConstantInt::get(Type::getInt32Ty(ctx), 0), ConstantInt::get(Type::getInt32Ty(ctx), 0)};
+  return ConstantExpr::getGetElementPtr(gv, makeArrayRef(args), true);
 }
 
 llvm::Constant* VMField::buildFieldOffset() 
@@ -85,6 +88,9 @@ llvm::Constant* VMField::buildFieldOffset()
   indices.push_back(ConstantInt::get(Type::getInt32Ty(getGlobalContext()), 0));
   indices.push_back(ConstantInt::get(Type::getInt32Ty(getGlobalContext()), getMemberIndex()));
 
-  return ConstantExpr::getPointerBitCastOrAddrSpaceCast(
-    ConstantExpr::getGetElementPtr(nullRef, indices), Type::getInt32Ty(getGlobalContext()));
+  llvm::Constant *src = ConstantExpr::getGetElementPtr(nullRef, indices);
+  if (src->getType()->isPointerTy())
+    src = ConstantExpr::getPtrToInt(src, Type::getInt32Ty(getGlobalContext()));
+
+  return ConstantExpr::getIntegerCast(src, Type::getInt32Ty(getGlobalContext()), false);
 }

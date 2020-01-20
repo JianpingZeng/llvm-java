@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
     if (InputClass == "-") {
       OutputFilename = "-";
     } else {
-      OutputFilename += ".ll";
+      OutputFilename = InputClass + ".ll";
     }
   }
 
